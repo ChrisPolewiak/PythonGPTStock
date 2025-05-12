@@ -9,7 +9,6 @@ from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient
 
 app = func.FunctionApp()
-@app.function_name(name="daily_review")
 
 # Load portfolio data depending on environment
 def load_portfolio():
@@ -24,12 +23,12 @@ def load_portfolio():
         stream = blob.download_blob()
         return json.loads(stream.readall())
 
+@app.function_name(name="daily_review")
 @app.timer_trigger(
     schedule="0 0 12 * * *",
     arg_name="myTimer",
     run_on_startup=True,
     use_monitor=True)
-
 def daily_review(myTimer: func.TimerRequest) -> None:
     if myTimer and myTimer.past_due:
         logging.info('The timer is past due!')
