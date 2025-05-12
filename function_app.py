@@ -3,7 +3,7 @@ import os
 import json
 from datetime import datetime
 from azure.communication.email import EmailClient
-from openai import OpenAI
+from openai import AzureOpenAI
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient
@@ -62,10 +62,14 @@ Portfolio:
 
 
     # Call OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = AzureOpenAI(
+        api_key=os.environ["AZURE_OPENAI_API_KEY"],
+        api_version="2024-03-01-preview",
+        azure_endpoint="https://ai-stockreview.openai.azure.com/"
+    )
 
     response = client.chat.completions.create(
-        model="gpt-4.1",
+        model="gpt4",
         messages=[
             {"role": "system", "content": "Jesteś analitykiem finansowym pomagającym polskiemu inwestorowi indywidualnemu analizować swój portfel. Tworzysz raport dzienny w HTML z najważniejszymi informacjami."},
             {"role": "user", "content": prompt}
