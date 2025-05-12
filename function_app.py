@@ -33,9 +33,9 @@ app = func.FunctionApp()
 def run_review_http(req: func.HttpRequest) -> func.HttpResponse:
     try:
         daily_review(None)
-        return func.HttpResponse("Raport został uruchomiony ręcznie.", status_code=200)
+        return func.HttpResponse("Raport was triggered manually", status_code=200)
     except Exception as e:
-        return func.HttpResponse(f"Błąd: {e}", status_code=500)
+        return func.HttpResponse(f"Error: {e}", status_code=500)
 
 def daily_review(myTimer: func.TimerRequest) -> None:
     if myTimer.past_due:
