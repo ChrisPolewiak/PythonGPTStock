@@ -16,7 +16,9 @@ def load_portfolio():
         with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
             return json.load(f)
     else:
-        blob = BlobClient(account_url="https://<your-storage-account>.blob.core.windows.net/",
+        account_name = os.environ["AZURE_STORAGE_ACCOUNT_NAME"]
+        account_url = f"https://{account_name}.blob.core.windows.net"
+        blob = BlobClient(account_url=account_url,
                         container_name="source",
                         blob_name="portfolio.json",
                         credential=DefaultAzureCredential())
