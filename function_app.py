@@ -8,13 +8,18 @@ import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient
 
-blob = BlobClient(account_url="https://<your-storage-account>.blob.core.windows.net/",
-                  container_name="source",
-                  blob_name="portfolio.json",
-                  credential=DefaultAzureCredential())
+if os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development":
+    # Lokalny test
+    with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
+        portfolio_data = json.load(f)
+else:
+    blob = BlobClient(account_url="https://<your-storage-account>.blob.core.windows.net/",
+                    container_name="source",
+                    blob_name="portfolio.json",
+                    credential=DefaultAzureCredential())
 
-stream = blob.download_blob()
-portfolio_data = json.loads(stream.readall())
+    stream = blob.download_blob()
+    portfolio_data = json.loads(stream.readall())
 
 app = func.FunctionApp()
 
@@ -49,7 +54,7 @@ Zasady:
 - W kolejnych sekcjach analizuj wszystkie spółki z istotnymi informacjami (📉 duże zmiany, 🗓️ zapowiedzi wyników, 💸 dywidendy, 🛑 alerty, 📢 newsy z rynku).
 - Nie pomijaj żadnych wiadomości ani spółek z ważnymi informacjami. Raport ma być kompletny, nie losowy.
 - Posortuj spółki wg ważności informacji – od najważniejszych do najmniej istotnych.
-- Sekcja "Pozostałe" ma pojawić się tylko jeśli zawiera **sensowne informacje**.
+- Sekcja "Pozostałe" ma pojawić się z podsumowaniem biezacych informacji.
 - Nie dodawaj oznaczeń portfeli (np. XTB, Revolut).
 - Wyróżnij istotne rzeczy graficznie (HTML, kolory, ikony) – ale **nie używaj wykresów**.
 - Jeżeli to możliwe, dodaj miniaturowe logotypy spółek (np. przez favicony lub linki).
@@ -65,11 +70,11 @@ Portfolio:
     client = AzureOpenAI(
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         api_version="2024-03-01-preview",
-        azure_endpoint="https://ai-stockreview.openai.azure.com/"
+        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"]
     )
 
     response = client.chat.completions.create(
-        model="gpt4",
+        model="gpt-4",
         messages=[
             {"role": "system", "content": "Jesteś analitykiem finansowym pomagającym polskiemu inwestorowi indywidualnemu analizować swój portfel. Tworzysz raport dzienny w HTML z najważniejszymi informacjami."},
             {"role": "user", "content": prompt}
@@ -91,7 +96,6 @@ Portfolio:
     cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo)</p>"
 
     html_body = result + cost_note
-
 
     # Send email using Azure Communication Services Email (dictionary-based)
     email_client = EmailClient.from_connection_string(acs_connection_string)
