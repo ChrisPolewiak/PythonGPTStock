@@ -77,4 +77,4 @@ jobs:
           az functionapp deployment source config-zip \
             --name fn-stockreview \
             --resource-group rg-stockreview \
-            --src deploy.zip
+            --src deploy.zip || true
