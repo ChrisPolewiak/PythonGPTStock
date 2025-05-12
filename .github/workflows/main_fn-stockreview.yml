@@ -34,7 +34,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Zip project for deployment
-        run: zip -r release.zip . -x "*.venv*" "*.git*" "*__pycache__*"
+        run: |
+          zip -r release.zip . \
+            -x "venv/*" \
+            -x ".git/*" \
+            -x "__pycache__/*" \
+            -x "*.pyc"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
