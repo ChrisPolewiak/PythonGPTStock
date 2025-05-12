@@ -1,3 +1,12 @@
-openai>=1.0.0
-azure-communication-email>=1.0.0
+# Azure Functions runtime
 azure-functions
+
+# OpenAI API (nowe SDK)
+openai>=1.2.0
+
+# Azure Communication Services (Email)
+azure-communication-email==1.0.1b1
+
+# Azure Storage + Identity (dla pobierania portfolio.json z Blob Storage)
+azure-storage-blob>=12.19.1
+azure-identity>=1.14.0

@@ -1,0 +1,4 @@
+{
+  "scriptFile": "function_app.py",
+  "entryPoint": "app"
+}
