@@ -8,7 +8,9 @@
       }
     },
     "logLevel": {
-      "Function": "Information"
+      "Function": "Information",
+      "Host.Results": "Warning",
+      "Host.Aggregator": "Error"
     }
   },
   "extensionBundle": {

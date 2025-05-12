@@ -8,51 +8,38 @@ import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient
 
-if os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development":
-    # Lokalny test
-    with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
-        portfolio_data = json.load(f)
-else:
-    blob = BlobClient(account_url="https://<your-storage-account>.blob.core.windows.net/",
-                    container_name="source",
-                    blob_name="portfolio.json",
-                    credential=DefaultAzureCredential())
-
-    stream = blob.download_blob()
-    portfolio_data = json.loads(stream.readall())
-
 app = func.FunctionApp()
 
+# Load portfolio data depending on environment
+def load_portfolio():
+    if os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development":
+        with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
+            return json.load(f)
+    else:
+        blob = BlobClient(account_url="https://<your-storage-account>.blob.core.windows.net/",
+                        container_name="source",
+                        blob_name="portfolio.json",
+                        credential=DefaultAzureCredential())
+        stream = blob.download_blob()
+        return json.loads(stream.readall())
+
 @app.timer_trigger(
-        schedule="0 0 12 * * *",
-        arg_name="myTimer",
-        run_on_startup=False,
-        use_monitor=False)
-
-@app.route(route="runreview", auth_level=func.AuthLevel.FUNCTION)
-def run_review_http(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        daily_review(None)
-        return func.HttpResponse("Raport was triggered manually", status_code=200)
-    except Exception as e:
-        return func.HttpResponse(f"Error: {e}", status_code=500)
-
+    schedule="0 0 12 * * *",
+    arg_name="myTimer",
+    run_on_startup=False,
+    use_monitor=True)
 def daily_review(myTimer: func.TimerRequest) -> None:
-    if myTimer.past_due:
+    if myTimer and myTimer.past_due:
         logging.info('The timer is past due!')
 
     logging.info('Executing daily portfolio review.')
 
-    # Set up environment variables
     acs_connection_string = os.environ["ACS_CONNECTION_STRING"]
     sender_email = os.environ["SENDER_EMAIL"]
     receiver_email = os.environ["RECEIVER_EMAIL"]
 
-    # # Load portfolio from JSON
-    # with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
-    #     portfolio_data = json.load(f)
+    portfolio_data = load_portfolio()
 
-    # Build refined prompt in Polish with structured HTML response
     prompt = f"""
 Dziś jest {datetime.now().strftime('%Y-%m-%d')}.
 Na podstawie poniższego portfela inwestycyjnego wygeneruj **krótki dzienny przegląd** w języku polskim, w formacie **HTML**.
@@ -73,8 +60,6 @@ Portfolio:
 {json.dumps(portfolio_data, indent=2)}
 """
 
-
-    # Call OpenAI
     client = AzureOpenAI(
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         api_version="2024-03-01-preview",
@@ -96,18 +81,14 @@ Portfolio:
     completion_tokens = usage.completion_tokens
     total_tokens = usage.total_tokens
 
-    # Estimate cost
     cost_input = prompt_tokens * 0.01 / 1000
     cost_output = completion_tokens * 0.03 / 1000
     total_cost = round(cost_input + cost_output, 4)
 
     cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo)</p>"
-
     html_body = result + cost_note
 
-    # Send email using Azure Communication Services Email (dictionary-based)
     email_client = EmailClient.from_connection_string(acs_connection_string)
-
     message = {
         "content": {
             "subject": f"📈 Dzienny przegląd portfela — {datetime.now().strftime('%Y-%m-%d')}",
@@ -125,8 +106,15 @@ Portfolio:
         "senderAddress": sender_email
     }
 
-
     poller = email_client.begin_send(message)
     poller.result()
+    logging.info("Daily review sent via ACS.")
 
-    logging.info("Daily review sent via ACS using dict-based message format.")
+@app.route(route="runreview", auth_level=func.AuthLevel.FUNCTION)
+def run_review_http(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        daily_review(None)
+        return func.HttpResponse("✅ Daily report has been manually triggered.", status_code=200)
+    except Exception as e:
+        return func.HttpResponse(f"❌ Error while triggering daily report: {e}", status_code=500)
+
