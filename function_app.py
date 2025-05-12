@@ -26,8 +26,16 @@ app = func.FunctionApp()
 @app.timer_trigger(
         schedule="0 0 12 * * *",
         arg_name="myTimer",
-        run_on_startup=True,
+        run_on_startup=False,
         use_monitor=False)
+
+@app.route(route="runreview", auth_level=func.AuthLevel.FUNCTION)
+def run_review_http(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        daily_review(None)
+        return func.HttpResponse("Raport został uruchomiony ręcznie.", status_code=200)
+    except Exception as e:
+        return func.HttpResponse(f"Błąd: {e}", status_code=500)
 
 def daily_review(myTimer: func.TimerRequest) -> None:
     if myTimer.past_due:
