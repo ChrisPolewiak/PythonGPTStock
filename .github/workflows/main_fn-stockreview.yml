@@ -33,13 +33,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Zip project for deployment
+      - name: Prepare clean build folder
         run: |
-          zip -r release.zip . \
-            -x "venv/*" \
-            -x ".git/*" \
-            -x "__pycache__/*" \
-            -x "*.pyc"
+          mkdir build
+          cp function_app.py host.json requirements.txt azure.functions.metadata.json build/
+          cp portfolio.json build/ || true
+
+      - name: Zip deployment package
+        run: |
+          cd build
+          zip -r ../release.zip .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
