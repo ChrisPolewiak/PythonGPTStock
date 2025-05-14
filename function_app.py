@@ -56,10 +56,11 @@ Zasady:
 - Nie dodawaj zbędnych informacji, które nie są istotne dla inwestora – np. komentarzy o braku logotypów.
 - Nie używaj tagów <html> ani <body> — generuj tylko treść HTML do osadzenia w wiadomości email.
 
-Portfolio:
-{{input}}
+Mój portfel inwestycyjny:
 """
-    prompt = html.escape(prompt)
+    prompt = html.escape(prompt + input_data)
+
+    # logging.info(f"Prompt starts with:\n{prompt[:2500]}")
 
     kernel = Kernel()
     chat_service = AzureChatCompletion(
@@ -73,6 +74,7 @@ Portfolio:
         input=input_data,
         date=datetime.now().strftime('%Y-%m-%d')
         )
+
 
     result = await kernel.invoke_prompt(
         prompt=prompt,
