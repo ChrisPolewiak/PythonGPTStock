@@ -1,9 +1,10 @@
 import logging
 import os
-import json
+import csv
 import asyncio
 import azure.functions as func
 import html
+import json
 
 from datetime import datetime
 from azure.communication.email import EmailClient
@@ -18,46 +19,111 @@ from semantic_kernel.functions.kernel_arguments import KernelArguments
 
 
 app = func.FunctionApp()
+is_dev = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development"
 
 # Load portfolio data depending on environment
 def load_portfolio():
-    if os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development":
-        with open(os.path.join(os.path.dirname(__file__), "portfolio.json"), "r") as f:
-            return json.load(f)
+    if is_dev:
+        with open(os.path.join(os.path.dirname(__file__), "portfolio.tsv"), "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            return list(reader)
     else:
         account_name = os.environ["AZURE_STORAGE_ACCOUNT_NAME"]
         account_url = f"https://{account_name}.blob.core.windows.net"
         blob = BlobClient(account_url=account_url,
-                        container_name="source",
-                        blob_name="portfolio.json",
-                        credential=DefaultAzureCredential())
+                          container_name="source",
+                          blob_name="portfolio.tsv",
+                          credential=DefaultAzureCredential())
         stream = blob.download_blob()
-        return json.loads(stream.readall())
+        content = stream.readall().decode("utf-8").splitlines()
+        reader = csv.DictReader(content, delimiter="\t")
+        return list(reader)
+
+def portfolio_to_tsv(data: list[dict]) -> str:
+    if not data:
+        return ""
+    headers = data[0].keys()
+    lines = ["\t".join(headers)]
+    for row in data:
+        lines.append("\t".join(str(row.get(h, "")) for h in headers))
+    return "\n".join(lines)
+
+def render_html_report(data: dict) -> str:
+    html = []
+
+    html.append(f"<h2>📌 Rekomendacje na dziś</h2>")
+
+    for action, label, color in [("buy", "✅ Dokupienie", "green"), ("buy-new", "✅ Kupno", "green"), ("sell", "❌ Sprzedaż", "red"), ("hold", "🕒 Przetrzymanie", "gray")]:
+        items = data.get("recommendations", {}).get(action, [])
+        if items:
+            html.append(f"<h3 style='color:{color}'>{label}</h3>")
+            html.append("<ul>")
+            for rec in items:
+                html.append(f"<li><b>{rec.get('company')}</b> <i>({rec.get('symbol')})</i> &mdash; {rec.get('reason')}</li>")
+            html.append("</ul>")
+
+    html.append("<hr><h2>📊 Analiza spółek</h2>")
+    for stock in data.get("analysis", []):
+        html.append(f"<h3><b>{stock.get('company')}</b> <i>({stock.get('symbol')})</i></h3>")
+        html.append("<ul>")
+        for point in stock.get("highlights", []):
+            html.append(f"<li>{point}</li>")
+        html.append("</ul>")
+
+    if notes := data.get("notes"):
+        html.append(f"<hr><p style='color:gray;font-size:small'>{notes}</p>")
+
+    return "\n".join(html)
+
+def parse_result_to_json(json_text: str) -> dict:
+    try:
+        return json.loads(json_text)
+    except Exception as e:
+        logging.error(f"Failed to parse model output to JSON: {e}")
+        return {}
+
 
 runmode = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") or "Production"
 
 async def querymodel():
     portfolio_data = load_portfolio()
-    input_data = json.dumps(portfolio_data, indent=2)
+    input_data = input_data = portfolio_to_tsv(portfolio_data)
 
-    prompt = f"""
-Dziś jest {{date}}.
-Na podstawie poniższego portfela inwestycyjnego wygeneruj **krótki dzienny przegląd** w języku polskim, w formacie **HTML**.
+    prompt = """
+Dziś jest {datetime.now().strftime('%Y-%m-%d')}.
+Na podstawie poniższego portfela inwestycyjnego wygeneruj analizę w postaci poprawnego obiektu JSON.
+Nie dodawaj żadnych opisów ani komentarzy — tylko czysty JSON.
 
-Zasady:
-- Rozpocznij raport od sekcji 📌 "Rekomendacje na dziś" – przedstaw jasno co warto zrobić (np. sprzedać, przeczekać, rozważyć dokupienie).
-- W kolejnych sekcjach analizuj wszystkie spółki z istotnymi informacjami (📉 duże zmiany, 🗓️ zapowiedzi wyników, 💸 dywidendy, 🛑 alerty, 📢 newsy z rynku).
-- Nie pomijaj żadnych wiadomości ani spółek z ważnymi informacjami. Raport ma być kompletny, nie losowy.
-- Posortuj spółki wg ważności informacji – od najważniejszych do najmniej istotnych.
-- Sekcja "Pozostałe" ma pojawić się z podsumowaniem biezacych informacji.
-- Nie dodawaj oznaczeń portfeli (np. XTB, Revolut).
-- Wyróżnij istotne rzeczy graficznie (HTML, kolory, ikony) – ale **nie używaj wykresów**.
-- Jeżeli to możliwe, dodaj miniaturowe logotypy spółek (np. przez favicony lub linki).
-- Nie dodawaj zbędnych informacji, które nie są istotne dla inwestora – np. komentarzy o braku logotypów.
-- Nie używaj tagów <html> ani <body> — generuj tylko treść HTML do osadzenia w wiadomości email.
+Podaj rekomendacje min 10 spółek, które są w portfelu + 5 nowych.
+Rekomendacje kupna podziel na te które już są w portfelu (buy) i nowe (buy-new).
+Interesują mnie spółki z rynku amerykańskiego dostępne w XTB generujące wysoką dywidendę albo duży wzrost w ciągu max 3 miesięcy.
 
-Mój portfel inwestycyjny:
+W sekcji analiza podaj informacje dla wszystkich posiadanych spółek.
+Komentarze dla spółek powinny być krótkie i zwięzłe, nie dłuższe niż 1 zdanie po polsku.
+
+Struktura JSON:
+
+{
+  "recommendations": {
+    "buy": [ { "symbol": "...", "company": "...", "reason": "..." } ],
+    "sell": [ { "symbol": "...", "company": "...", "reason": "..." } ],
+    "hold": [ { "symbol": "...", "company": "...", "reason": "..." } ]
+    "buy-new": [ { "symbol": "...", "company": "...", "reason": "..." } ],
+  },
+  "analysis": [
+    {
+      "symbol": "...",
+      "company": "...",
+      "highlights": [ "...", "..." ]
+    }
+  ],
+  "notes": "Dodatkowe uwagi podsumowujące analizę, np. ogólny sentyment lub alerty."
+}
+
+Portfel wejściowy (TSV):
 """
+
+
     prompt = html.escape(prompt + input_data)
 
     # logging.info(f"Prompt starts with:\n{prompt[:2500]}")
@@ -83,7 +149,14 @@ Mój portfel inwestycyjny:
         max_tokens=1000
         )
 
-    output_text = "".join([chunk.content for chunk in result.value])
+    if isinstance(result.value, str):
+        output_json = result.value
+    else:
+        output_json = "".join([chunk.content for chunk in result.value])
+
+    parsed_json = parse_result_to_json(output_json)
+    output_html = render_html_report(parsed_json)
+
     metadata = result.metadata or {}
     usage = metadata.get("usage", {})
 
@@ -95,7 +168,7 @@ Mój portfel inwestycyjny:
 
     logging.info(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}, Total cost: {total_cost}")
 
-    return output_text, prompt_tokens, completion_tokens, total_cost
+    return output_html, prompt_tokens, completion_tokens, total_cost
 
 
 def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, total_cost: float):
@@ -131,13 +204,16 @@ def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, tota
 async def run_daily_review():
     html_body, prompt_tokens, completion_tokens, total_cost = await querymodel()
     send_report(html_body, prompt_tokens, completion_tokens, total_cost)
+    if is_dev:
+        os._exit(0)
 
 @app.function_name(name="daily_review")
 @app.timer_trigger(
     schedule="0 0 12 10 * *",
     arg_name="myTimer",
-    run_on_startup=False,
-    use_monitor=True)
+    run_on_startup=is_dev,
+    use_monitor=not is_dev
+    )
 def daily_review(myTimer: func.TimerRequest) -> None:
     if myTimer and myTimer.past_due:
         logging.info('The timer is past due!')
