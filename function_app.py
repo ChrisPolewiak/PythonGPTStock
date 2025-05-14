@@ -34,6 +34,8 @@ def load_portfolio():
         stream = blob.download_blob()
         return json.loads(stream.readall())
 
+runmode = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") or "Production"
+
 async def querymodel():
     portfolio_data = load_portfolio()
     input_data = json.dumps(portfolio_data, indent=2)
@@ -79,8 +81,6 @@ Portfolio:
         max_tokens=1000
         )
 
-    logging.info(f"Type of result.value: {type(result.value)}")
-
     output_text = "".join([chunk.content for chunk in result.value])
     metadata = result.metadata or {}
     usage = metadata.get("usage", {})
@@ -91,6 +91,8 @@ Portfolio:
     cost_output = completion_tokens * 0.03 / 1000
     total_cost = round(cost_input + cost_output, 4)
 
+    logging.info(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}, Total cost: {total_cost}")
+
     return output_text, prompt_tokens, completion_tokens, total_cost
 
 
@@ -99,7 +101,7 @@ def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, tota
     sender_email = os.environ["SENDER_EMAIL"]
     receiver_email = os.environ["RECEIVER_EMAIL"]
 
-    cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo)</p>"
+    cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo).<br>${runmode}</p>"
     final_html = html_body + cost_note
 
     email_client = EmailClient.from_connection_string(acs_connection_string)
