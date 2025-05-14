@@ -134,9 +134,9 @@ async def run_daily_review():
 
 @app.function_name(name="daily_review")
 @app.timer_trigger(
-    schedule="0 0 12 * * *",
+    schedule="0 0 12 10 * *",
     arg_name="myTimer",
-    run_on_startup=True,
+    run_on_startup=False,
     use_monitor=True)
 def daily_review(myTimer: func.TimerRequest) -> None:
     if myTimer and myTimer.past_due:
