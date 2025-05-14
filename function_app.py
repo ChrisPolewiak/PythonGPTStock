@@ -1,12 +1,21 @@
 import logging
 import os
 import json
+import asyncio
+import azure.functions as func
+import html
+
 from datetime import datetime
 from azure.communication.email import EmailClient
-from openai import AzureOpenAI
-import azure.functions as func
+
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient
+
+from semantic_kernel.kernel import Kernel
+from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.functions.kernel_arguments import KernelArguments
+
+
 
 app = func.FunctionApp()
 
@@ -25,26 +34,12 @@ def load_portfolio():
         stream = blob.download_blob()
         return json.loads(stream.readall())
 
-@app.function_name(name="daily_review")
-@app.timer_trigger(
-    schedule="0 0 12 * * *",
-    arg_name="myTimer",
-    run_on_startup=True,
-    use_monitor=True)
-def daily_review(myTimer: func.TimerRequest) -> None:
-    if myTimer and myTimer.past_due:
-        logging.info('The timer is past due!')
-
-    logging.info('Executing daily portfolio review.')
-
-    acs_connection_string = os.environ["ACS_CONNECTION_STRING"]
-    sender_email = os.environ["SENDER_EMAIL"]
-    receiver_email = os.environ["RECEIVER_EMAIL"]
-
+async def querymodel():
     portfolio_data = load_portfolio()
+    input_data = json.dumps(portfolio_data, indent=2)
 
     prompt = f"""
-Dziś jest {datetime.now().strftime('%Y-%m-%d')}.
+Dziś jest {{date}}.
 Na podstawie poniższego portfela inwestycyjnego wygeneruj **krótki dzienny przegląd** w języku polskim, w formacie **HTML**.
 
 Zasady:
@@ -60,43 +55,59 @@ Zasady:
 - Nie używaj tagów <html> ani <body> — generuj tylko treść HTML do osadzenia w wiadomości email.
 
 Portfolio:
-{json.dumps(portfolio_data, indent=2)}
+{{input}}
 """
+    prompt = html.escape(prompt)
 
-    client = AzureOpenAI(
-        api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        api_version="2024-03-01-preview",
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"]
+    kernel = Kernel()
+    chat_service = AzureChatCompletion(
+        deployment_name="gpt-4",
+        endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY")
     )
+    kernel.add_service(chat_service)
 
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "Jesteś analitykiem finansowym pomagającym polskiemu inwestorowi indywidualnemu analizować swój portfel. Tworzysz raport dzienny w HTML z najważniejszymi informacjami."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.0
-    )
+    args = KernelArguments(
+        input=input_data,
+        date=datetime.now().strftime('%Y-%m-%d')
+        )
 
-    result = response.choices[0].message.content
-    usage = response.usage
-    prompt_tokens = usage.prompt_tokens
-    completion_tokens = usage.completion_tokens
-    total_tokens = usage.total_tokens
+    result = await kernel.invoke_prompt(
+        prompt=prompt,
+        arguments=args,
+        temperature=0.0,
+        max_tokens=1000
+        )
 
+    logging.info(f"Type of result.value: {type(result.value)}")
+
+    output_text = "".join([chunk.content for chunk in result.value])
+    metadata = result.metadata or {}
+    usage = metadata.get("usage", {})
+
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
     cost_input = prompt_tokens * 0.01 / 1000
     cost_output = completion_tokens * 0.03 / 1000
     total_cost = round(cost_input + cost_output, 4)
 
+    return output_text, prompt_tokens, completion_tokens, total_cost
+
+
+def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, total_cost: float):
+    acs_connection_string = os.environ["ACS_CONNECTION_STRING"]
+    sender_email = os.environ["SENDER_EMAIL"]
+    receiver_email = os.environ["RECEIVER_EMAIL"]
+
     cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo)</p>"
-    html_body = result + cost_note
+    final_html = html_body + cost_note
 
     email_client = EmailClient.from_connection_string(acs_connection_string)
     message = {
         "content": {
             "subject": f"📈 Dzienny przegląd portfela — {datetime.now().strftime('%Y-%m-%d')}",
             "plainText": "Twój raport dzienny jest dostępny w wersji HTML.",
-            "html": html_body
+            "html": final_html
         },
         "recipients": {
             "to": [
@@ -113,10 +124,25 @@ Portfolio:
     poller.result()
     logging.info("Daily review sent via ACS.")
 
+async def run_daily_review():
+    html_body, prompt_tokens, completion_tokens, total_cost = await querymodel()
+    send_report(html_body, prompt_tokens, completion_tokens, total_cost)
+
+@app.function_name(name="daily_review")
+@app.timer_trigger(
+    schedule="0 0 12 * * *",
+    arg_name="myTimer",
+    run_on_startup=True,
+    use_monitor=True)
+def daily_review(myTimer: func.TimerRequest) -> None:
+    if myTimer and myTimer.past_due:
+        logging.info('The timer is past due!')
+    asyncio.run(run_daily_review())
+
 @app.route(route="runreview", auth_level=func.AuthLevel.FUNCTION)
 def run_review_http(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        daily_review(None)
+        asyncio.run(run_daily_review())
         return func.HttpResponse("✅ Daily report has been manually triggered.", status_code=200)
     except Exception as e:
         return func.HttpResponse(f"❌ Error while triggering daily report: {e}", status_code=500)
