@@ -209,7 +209,7 @@ async def run_daily_review():
 
 @app.function_name(name="daily_review")
 @app.timer_trigger(
-    schedule="0 0 12 10 * *",
+    schedule="0 12 * * *",
     arg_name="myTimer",
     run_on_startup=is_dev,
     use_monitor=not is_dev
