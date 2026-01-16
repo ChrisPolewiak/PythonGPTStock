@@ -287,9 +287,9 @@ Portfel wejściowy (TSV):
             prompt_tokens = 0
             completion_tokens = 0
 
-        # GPT-4o pricing: $2.50 per 1M input tokens, $10.00 per 1M output tokens
-        cost_input = prompt_tokens * 2.50 / 1_000_000
-        cost_output = completion_tokens * 10.00 / 1_000_000
+        # GPT-5.2 pricing: $1.75 per 1M input tokens, $14.00 per 1M output tokens
+        cost_input = prompt_tokens * 1.75 / 1_000_000
+        cost_output = completion_tokens * 14.00 / 1_000_000
         total_cost = round(cost_input + cost_output, 4)
 
         logging.info(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}, Total cost: {total_cost}")
