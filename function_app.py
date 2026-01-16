@@ -221,7 +221,7 @@ Struktura JSON:
       "highlights": [
         "Aktualna sytuacja spółki i ostatnie wydarzenia",
         "Perspektywy wzrostu lub ryzyka",
-        "Rekomendacja inwestycyjna z uzasadnieniem. W rekomencjach cały wiersz zapisz na czerwono jeśli to buy i samo słowo buy jako BOLD, analogicznie sell zielone, hold ciemno-szare."
+        "Rekomendacja inwestycyjna z uzasadnieniem. W rekomencjach cały wiersz zapisz na zielono jeśli to buy i samo słowo buy jako BOLD, analogicznie sell czerwone, hold ciemno-szare."
       ]
     }
   ]
