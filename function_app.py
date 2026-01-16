@@ -165,7 +165,7 @@ Portfel wejściowy (TSV):
 
         kernel = Kernel()
         chat_service = AzureChatCompletion(
-            deployment_name="gpt-4",
+            deployment_name="gpt-5.2-chat",
             endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_key=os.getenv("AZURE_OPENAI_API_KEY")
         )
