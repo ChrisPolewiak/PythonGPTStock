@@ -1,6 +1,7 @@
 import logging
 import os
 import csv
+import uuid
 import asyncio
 import azure.functions as func
 import html
@@ -84,6 +85,11 @@ def portfolio_to_tsv(data: list[dict]) -> str:
 
 def render_html_report(data: dict) -> str:
     html = []
+    
+    # Handle empty or invalid data
+    if not data or not isinstance(data, dict):
+        html.append("<p style='color:red'>⚠️ Błąd: Nie udało się wygenerować raportu. Dane wejściowe są nieprawidłowe.</p>")
+        return "\n".join(html)
 
     html.append(f"<h2>📌 Rekomendacje na dziś</h2>")
 
@@ -105,26 +111,28 @@ def render_html_report(data: dict) -> str:
         html.append("</ul>")
 
     if notes := data.get("notes"):
-        html.append(f"<hr><p style='color:gray;font-size:small'>{notes}</p>")
+        html.append(f"<hr><div style='background-color:#f0f8ff;border-left:4px solid #4169e1;padding:15px;margin:10px 0'><h3 style='color:#4169e1;margin-top:0'>📝 Notatki i Sentyment Rynku</h3><p style='margin:0;font-size:14px;line-height:1.6'>{notes}</p></div>")
 
     return "\n".join(html)
 
 def parse_result_to_json(json_text: str) -> dict:
     try:
-        parsed = json.loads(json_text)
+        # Remove markdown code blocks if present
+        if json_text.strip().startswith("```"):
+            json_text = json_text.strip()
+            if json_text.startswith("```json"):
+                json_text = json_text[7:]
+            elif json_text.startswith("```"):
+                json_text = json_text[3:]
+            if json_text.endswith("```"):
+                json_text = json_text[:-3]
+            json_text = json_text.strip()
         
-        # Track successful parse
-        if telemetry_client:
-            telemetry_client.track_event("JSONParseSuccess", {
-                "response_length": str(len(json_text)),
-                "response_preview": json_text[:200]
-            })
-        
-        return parsed
+        return json.loads(json_text)
     except Exception as e:
         logging.error(f"Failed to parse model output to JSON: {e}")
+        logging.error(f"Output preview: {json_text[:500]}")
         
-        # Track parse failure with details
         if telemetry_client:
             telemetry_client.track_event("JSONParseFailed", {
                 "error": str(e),
@@ -140,9 +148,12 @@ runmode = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") or "Production"
 
 async def querymodel():
     start_time = datetime.now()
+    correlation_id = str(uuid.uuid4())
     
     if telemetry_client:
-        telemetry_client.track_event("QueryModelStarted")
+        telemetry_client.track_event("QueryModelStarted", {"correlation_id": correlation_id})
+    
+    logging.info(f"Query started with correlation ID: {correlation_id}")
     
     try:
         portfolio_data = load_portfolio()
@@ -176,10 +187,11 @@ Podział rekomendacji:
 
 W sekcji "analysis":
 - Uwzględnij wszystkie spółki z portfela.
-- Komentarz do każdej spółki:
-  - po polsku,
-  - maksymalnie 1 zdanie,
-  - krótki i konkretny.
+- Dla każdej spółki podaj 2-3 punkty (highlights):
+  1. Aktualna sytuacja spółki i ostatnie kluczowe wydarzenia (wyniki, ogłoszenia, zmiany strategiczne)
+  2. Perspektywy wzrostu lub główne ryzyka w najbliższym okresie
+  3. Rekomendacja inwestycyjna z krótkim uzasadnieniem
+- Każdy punkt powinien być konkretny, zwięzły (1-2 zdania) i po polsku.
     
 Nie podawaj konkretnych cen akcji.
 Jeśli nie masz danych bieżących, opieraj się na trendach i sentymencie z ostatnich miesięcy.
@@ -201,14 +213,18 @@ Struktura JSON:
       { "symbol": "...", "company": "...", "reason": "..." }
     ]
   },
+  "notes": "Szczegółowe podsumowanie sentymentu rynku, główne ryzyka makroekonomiczne i szanse inwestycyjne w bieżącym okresie.",
   "analysis": [
     {
       "symbol": "...",
       "company": "...",
-      "highlights": [ "..." ]
+      "highlights": [
+        "Aktualna sytuacja spółki i ostatnie wydarzenia",
+        "Perspektywy wzrostu lub ryzyka",
+        "Rekomendacja inwestycyjna z uzasadnieniem. W rekomencjach cały wiersz zapisz na czerwono jeśli to buy i samo słowo buy jako BOLD, analogicznie sell zielone, hold ciemno-szare."
+      ]
     }
-  ],
-  "notes": "Krótke podsumowanie sentymentu rynku lub główne ryzyka."
+  ]
 }
 
 Portfel wejściowy (TSV):
@@ -253,23 +269,27 @@ Portfel wejściowy (TSV):
         parsed_json = parse_result_to_json(output_json)
         output_html = render_html_report(parsed_json)
 
+        # Extract usage from metadata
         metadata = result.metadata or {}
-        usage = metadata.get("usage", None)
+        inner_metadata = metadata.get("metadata", {})
         
-        # Extract token usage - handle both dict and object
-        if usage:
-            if hasattr(usage, 'prompt_tokens'):
-                prompt_tokens = usage.prompt_tokens
-                completion_tokens = usage.completion_tokens
-            else:
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
+        # If inner_metadata is a list, get the first element
+        if isinstance(inner_metadata, list) and len(inner_metadata) > 0:
+            inner_metadata = inner_metadata[0]
+        
+        usage = inner_metadata.get("usage", None) if isinstance(inner_metadata, dict) else None
+        
+        # Extract token usage
+        if usage and hasattr(usage, 'prompt_tokens'):
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
         else:
             prompt_tokens = 0
             completion_tokens = 0
 
-        cost_input = prompt_tokens * 0.01 / 1000
-        cost_output = completion_tokens * 0.03 / 1000
+        # GPT-4o pricing: $2.50 per 1M input tokens, $10.00 per 1M output tokens
+        cost_input = prompt_tokens * 2.50 / 1_000_000
+        cost_output = completion_tokens * 10.00 / 1_000_000
         total_cost = round(cost_input + cost_output, 4)
 
         logging.info(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}, Total cost: {total_cost}")
@@ -291,7 +311,7 @@ Portfel wejściowy (TSV):
             telemetry_client.track_event("QueryModelCompleted", properties)
             telemetry_client.flush()
 
-        return output_html, prompt_tokens, completion_tokens, total_cost
+        return output_html, prompt_tokens, completion_tokens, total_cost, correlation_id
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Error in querymodel: {error_msg}")
@@ -299,22 +319,28 @@ Portfel wejściowy (TSV):
         # Track exception in Application Insights
         if telemetry_client:
             telemetry_client.track_exception()
+            telemetry_client.track_event("QueryModelFailed", {"correlation_id": correlation_id})
             telemetry_client.flush()
             
         raise
-def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, total_cost: float):
+def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, total_cost: float, correlation_id: str):
     start_time = datetime.now()
     
     if telemetry_client:
-        telemetry_client.track_event("SendReportStarted")
+        telemetry_client.track_event("SendReportStarted", {"correlation_id": correlation_id})
     
     try:
         acs_connection_string = os.environ["ACS_CONNECTION_STRING"]
         sender_email = os.environ["SENDER_EMAIL"]
         receiver_email = os.environ["RECEIVER_EMAIL"]
 
-        cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi (łącznie: {prompt_tokens + completion_tokens} tokenów).<br>💸 Szacunkowy koszt: <b>${total_cost}</b> ({MODEL_DEPLOYMENT_NAME}).<br>${runmode}</p>"
-        final_html = html_body + cost_note
+        # Add warning if report is empty or has no real content
+        empty_warning = ""
+        if not html_body or len(html_body.strip()) < 50:
+            empty_warning = f"<p style='color:red;font-weight:bold'>⚠️ Raport może być niepełny. Sprawdź logi w Application Insights dla ID: {correlation_id}</p>"
+        
+        cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi (łącznie: {prompt_tokens + completion_tokens} tokenów).<br>💸 Szacunkowy koszt: <b>${total_cost}</b> ({MODEL_DEPLOYMENT_NAME}).<br>📋 Correlation ID: {correlation_id}</p>"
+        final_html = empty_warning + html_body + cost_note
 
         email_client = EmailClient.from_connection_string(acs_connection_string)
         message = {
@@ -365,8 +391,8 @@ async def run_daily_review():
         telemetry_client.track_event("DailyReviewStarted", {"runMode": runmode})
     
     try:
-        html_body, prompt_tokens, completion_tokens, total_cost = await querymodel()
-        send_report(html_body, prompt_tokens, completion_tokens, total_cost)
+        html_body, prompt_tokens, completion_tokens, total_cost, correlation_id = await querymodel()
+        send_report(html_body, prompt_tokens, completion_tokens, total_cost, correlation_id)
         
         if telemetry_client:
             telemetry_client.track_event("DailyReviewCompleted", {"runMode": runmode})
