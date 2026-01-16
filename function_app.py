@@ -152,31 +152,63 @@ async def querymodel():
 Dziś jest {datetime.now().strftime('%Y-%m-%d')}.
 Na podstawie poniższego portfela inwestycyjnego wygeneruj analizę w postaci poprawnego obiektu JSON.
 Nie dodawaj żadnych opisów ani komentarzy — tylko czysty JSON.
+JSON musi być poprawny składniowo i możliwy do sparsowania przez json.loads().
 
-Podaj rekomendacje min 10 spółek, które są w portfelu + 5 nowych.
-Rekomendacje kupna podziel na te które już są w portfelu (buy) i nowe (buy-new).
-Interesują mnie spółki z rynku amerykańskiego dostępne w XTB generujące wysoką dywidendę albo duży wzrost w ciągu max 3 miesięcy.
+Cel:
+- Wygeneruj rekomendacje inwestycyjne oraz analizę portfela.
 
-W sekcji analiza podaj informacje dla wszystkich posiadanych spółek.
-Komentarze dla spółek powinny być krótkie i zwięzłe, nie dłuższe niż 1 zdanie po polsku.
+Wymagania:
+- Podaj rekomendacje dla:
+  - minimum 10 spółek, które już są w portfelu,
+  - minimum 5 nowych spółek.
+- Interesują mnie wyłącznie:
+  - spółki z rynku amerykańskiego,
+  - dostępne w XTB,
+  - o profilu:
+    - wysokiej dywidendy lub
+    - potencjale dużego wzrostu w ciągu maksymalnie 3 miesięcy.
+
+Podział rekomendacji:
+- "buy" – spółki już w portfelu, które warto dokupić,
+- "buy-new" – nowe spółki warte dodania,
+- "hold" – spółki do utrzymania,
+- "sell" – spółki do rozważenia sprzedaży.    
+
+W sekcji "analysis":
+- Uwzględnij wszystkie spółki z portfela.
+- Komentarz do każdej spółki:
+  - po polsku,
+  - maksymalnie 1 zdanie,
+  - krótki i konkretny.
+    
+Nie podawaj konkretnych cen akcji.
+Jeśli nie masz danych bieżących, opieraj się na trendach i sentymencie z ostatnich miesięcy.
 
 Struktura JSON:
 
 {
   "recommendations": {
-    "buy": [ { "symbol": "...", "company": "...", "reason": "..." } ],
-    "sell": [ { "symbol": "...", "company": "...", "reason": "..." } ],
-    "hold": [ { "symbol": "...", "company": "...", "reason": "..." } ]
-    "buy-new": [ { "symbol": "...", "company": "...", "reason": "..." } ],
+    "buy": [
+      { "symbol": "...", "company": "...", "reason": "..." }
+    ],
+    "buy-new": [
+      { "symbol": "...", "company": "...", "reason": "..." }
+    ],
+    "hold": [
+      { "symbol": "...", "company": "...", "reason": "..." }
+    ],
+    "sell": [
+      { "symbol": "...", "company": "...", "reason": "..." }
+    ]
   },
   "analysis": [
     {
       "symbol": "...",
       "company": "...",
-      "highlights": [ "...", "..." ]
+      "highlights": [ "..." ]
     }
   ],
-  "notes": "Dodatkowe uwagi podsumowujące analizę, np. ogólny sentyment lub alerty."
+  "notes": "Krótke podsumowanie sentymentu rynku lub główne ryzyka."
 }
 
 Portfel wejściowy (TSV):
