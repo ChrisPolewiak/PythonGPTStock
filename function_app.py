@@ -26,6 +26,9 @@ from applicationinsights.logging import LoggingHandler
 app = func.FunctionApp()
 is_dev = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT") == "Development"
 
+# Model configuration
+MODEL_DEPLOYMENT_NAME = "gpt-5.2-chat"
+
 # Initialize Application Insights
 connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
 instrumentation_key = os.environ.get("APPINSIGHTS_INSTRUMENTATIONKEY")
@@ -108,9 +111,28 @@ def render_html_report(data: dict) -> str:
 
 def parse_result_to_json(json_text: str) -> dict:
     try:
-        return json.loads(json_text)
+        parsed = json.loads(json_text)
+        
+        # Track successful parse
+        if telemetry_client:
+            telemetry_client.track_event("JSONParseSuccess", {
+                "response_length": str(len(json_text)),
+                "response_preview": json_text[:200]
+            })
+        
+        return parsed
     except Exception as e:
         logging.error(f"Failed to parse model output to JSON: {e}")
+        
+        # Track parse failure with details
+        if telemetry_client:
+            telemetry_client.track_event("JSONParseFailed", {
+                "error": str(e),
+                "response_length": str(len(json_text)),
+                "response_preview": json_text[:500]
+            })
+            telemetry_client.track_exception()
+        
         return {}
 
 
@@ -165,7 +187,7 @@ Portfel wejściowy (TSV):
 
         kernel = Kernel()
         chat_service = AzureChatCompletion(
-            deployment_name="gpt-5.2-chat",
+            deployment_name=MODEL_DEPLOYMENT_NAME,
             endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_key=os.getenv("AZURE_OPENAI_API_KEY")
         )
@@ -189,14 +211,31 @@ Portfel wejściowy (TSV):
         else:
             output_json = "".join([chunk.content for chunk in result.value])
 
+        # Track model response
+        if telemetry_client:
+            telemetry_client.track_event("ModelResponseReceived", {
+                "response_length": str(len(output_json)),
+                "response_type": "string" if isinstance(result.value, str) else "chunks"
+            })
+
         parsed_json = parse_result_to_json(output_json)
         output_html = render_html_report(parsed_json)
 
         metadata = result.metadata or {}
-        usage = metadata.get("usage", {})
+        usage = metadata.get("usage", None)
+        
+        # Extract token usage - handle both dict and object
+        if usage:
+            if hasattr(usage, 'prompt_tokens'):
+                prompt_tokens = usage.prompt_tokens
+                completion_tokens = usage.completion_tokens
+            else:
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+        else:
+            prompt_tokens = 0
+            completion_tokens = 0
 
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
         cost_input = prompt_tokens * 0.01 / 1000
         cost_output = completion_tokens * 0.03 / 1000
         total_cost = round(cost_input + cost_output, 4)
@@ -242,7 +281,7 @@ def send_report(html_body: str, prompt_tokens: int, completion_tokens: int, tota
         sender_email = os.environ["SENDER_EMAIL"]
         receiver_email = os.environ["RECEIVER_EMAIL"]
 
-        cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi.<br>💸 Szacunkowy koszt: <b>${total_cost}</b> (GPT-4 Turbo).<br>${runmode}</p>"
+        cost_note = f"<hr><p style='font-size:small;color:gray'>🔍 Wykorzystano {prompt_tokens} tokenów promptu, {completion_tokens} tokenów odpowiedzi (łącznie: {prompt_tokens + completion_tokens} tokenów).<br>💸 Szacunkowy koszt: <b>${total_cost}</b> ({MODEL_DEPLOYMENT_NAME}).<br>${runmode}</p>"
         final_html = html_body + cost_note
 
         email_client = EmailClient.from_connection_string(acs_connection_string)
