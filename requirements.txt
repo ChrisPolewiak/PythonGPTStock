@@ -6,3 +6,4 @@ azure-identity>=1.14.0
 semantic-kernel
 python-dotenv
 applicationinsights
+pyjwt>=2.13.0 # not directly required, pinned by Snyk to avoid a vulnerability
